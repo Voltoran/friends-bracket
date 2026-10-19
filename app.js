@@ -12,16 +12,17 @@ const category=()=>state?.categories.find(c=>c.id===selected);
 // Supabase returns the one-time email sign-in session in the URL fragment.
 // Remove it before any further navigation or sharing.
 const signInHash=new URLSearchParams(location.hash.slice(1));
-let signedInFromEmail=false;
+let signedInFromEmail=false, passwordRecovery=load('bracket-password-recovery',false);
 if(signInHash.has('access_token')){
   session={access_token:signInHash.get('access_token'),refresh_token:signInHash.get('refresh_token'),expires_at:Number(signInHash.get('expires_at'))||Math.floor(Date.now()/1000)+Number(signInHash.get('expires_in')||3600)};
+  passwordRecovery=signInHash.get('type')==='recovery';save('bracket-password-recovery',passwordRecovery);
   save('bracket-session',session);signedInFromEmail=true;history.replaceState(null,'',location.pathname+location.search);
 }else if(signInHash.has('error_description')){
   history.replaceState(null,'',location.pathname+location.search);
   setTimeout(()=>toast('Ссылка для входа недействительна или уже использована. Запроси новую.'),100);
 }
 
-async function request(path,body,{authenticated=true}={}) {
+async function request(path,body,{authenticated=true,method='POST'}={}) {
   if(authenticated && session && session.expires_at*1000<Date.now()+60000) {
     refreshPromise ||= request('/auth/v1/token?grant_type=refresh_token',{refresh_token:session.refresh_token},{authenticated:false})
       .then(data=>{session=data;session.expires_at ||= Math.floor(Date.now()/1000)+data.expires_in;save('bracket-session',session);})
@@ -30,12 +31,16 @@ async function request(path,body,{authenticated=true}={}) {
     await refreshPromise;
   }
   let response;
-  try{response=await fetch(config.url+path,{method:'POST',headers:{'Content-Type':'application/json',apikey:config.key,...(authenticated&&session?{Authorization:`Bearer ${session.access_token}`}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});}
+  try{response=await fetch(config.url+path,{method,headers:{'Content-Type':'application/json',apikey:config.key,...(authenticated&&session?{Authorization:`Bearer ${session.access_token}`}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});}
   catch{throw new Error('Не удалось связаться с сервером. Проверь интернет и попробуй ещё раз.');}
   const data=await response.json().catch(()=>null);
   if(!response.ok) {
     if(response.status===429) throw new Error('Слишком много запросов. Подожди минуту и повтори.');
     const message=data?.msg || data?.message || data?.error_description || data?.error;
+    if(data?.error_code==='invalid_credentials'||/Invalid login credentials/i.test(message||'')) throw new Error('Неверная почта или пароль. Для первого входа нажми «Задать / сбросить пароль».');
+    if(data?.error_code==='email_not_confirmed') throw new Error('Почта ещё не подтверждена. Открой ссылку из письма для установки пароля.');
+    if(data?.error_code==='weak_password') throw new Error('Выбери более надёжный пароль: минимум 8 символов, буквы и цифры.');
+    if(data?.error_code==='same_password') throw new Error('Этот пароль уже установлен. Выбери другой или закрой окно и войди с прежним.');
     if(String(message).includes('Email address not authorized')) throw new Error('Для входа используй почту владельца проекта Supabase.');
     if(String(message).includes('permission denied')) throw new Error('Это действие доступно только организатору.');
     if(/expired|invalid.*token|token.*invalid/i.test(message || '')) throw new Error('Код или сессия истекли. Запроси новый код для входа.');
@@ -87,7 +92,7 @@ function matchHtml(c,m){
 function renderAdmin(){
   if(!state.organizer){$('#admin-tools').innerHTML='';return;}
   const c=category();
-  $('#admin-tools').innerHTML=`<div class="admin-tools" tabindex="-1"><div class="button-row"><button class="button dark" data-action="new-category">+ Создать голосование</button><button class="button" data-action="voters">Пригласить друзей</button><button class="button" data-action="trash">Корзина</button><button class="button" data-action="logout">Выйти из управления</button></div>${c?`<div class="button-row category-actions"><span class="tools-label">Это голосование:</span><button class="button" data-action="rename">Переименовать</button>${c.status==='draft'?'<button class="button" data-action="entries">Участники</button><button class="button dark" data-action="start">Открыть голосование</button>':c.status==='active'?'<button class="button" data-action="runoff">Переголосование при ничьей</button><button class="button dark" data-action="close">Завершить раунд</button>':''}<button class="button danger" data-action="delete">Удалить</button></div>`:''}</div>`;
+  $('#admin-tools').innerHTML=`<div class="admin-tools" tabindex="-1"><div class="button-row"><button class="button dark" data-action="new-category">+ Создать голосование</button><button class="button" data-action="voters">Пригласить друзей</button><button class="button" data-action="trash">Корзина</button><button class="button" data-action="password">Сменить пароль</button><button class="button" data-action="logout">Выйти из управления</button></div>${c?`<div class="button-row category-actions"><span class="tools-label">Это голосование:</span><button class="button" data-action="rename">Переименовать</button>${c.status==='draft'?'<button class="button" data-action="entries">Участники</button><button class="button dark" data-action="start">Открыть голосование</button>':c.status==='active'?'<button class="button" data-action="runoff">Переголосование при ничьей</button><button class="button dark" data-action="close">Завершить раунд</button>':''}<button class="button danger" data-action="delete">Удалить</button></div>`:''}</div>`;
 }
 function joinDialog(){
   if(state?.voter){code='';save('bracket-code',null);refresh();toast('Ты вышел из голосования');return;}
@@ -95,9 +100,38 @@ function joinDialog(){
   formHandler(async data=>{const candidate=data.get('code').trim();const result=await rpc('state',{p_code:candidate});if(!result.voter)throw new Error('Код не найден или отключён. Проверь его у организатора.');code=candidate;save('bracket-code',code);state=result;dialog.close();render();toast(`Привет, ${result.voter.label}! Выбирай фаворитов.`);});
 }
 function adminDialog(){
-  if(state?.organizer){$('#admin-tools').scrollIntoView({block:'start'});$('.admin-tools').focus();return;}
-  modal(`<h2>Вход организатора</h2><p>Введи почту владельца турнира. Пришлём одноразовую ссылку для входа. Друзьям для голосования почта не нужна.</p><form><label for="email">Электронная почта</label><input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"><div class="form-error" role="alert"></div><div class="form-actions"><button class="button dark" type="submit">Получить ссылку</button></div></form>`);
-  formHandler(async data=>{const email=data.get('email').trim().toLowerCase();await request('/auth/v1/otp?redirect_to='+encodeURIComponent('https://voltoran.github.io/friends-bracket/'),{email,create_user:true},{authenticated:false});modal('<h2>Проверь почту</h2><p>Письмо со ссылкой для входа отправлено на '+escape(email)+'. Открой ссылку: панель организатора появится на сайте. Если письма нет, проверь «Спам».</p><p>Повторный запрос доступен через минуту. Ссылка одноразовая; не пересылай её другим.</p>');});
+  if(state?.organizer){if(passwordRecovery){passwordDialog();return;}$('#admin-tools').scrollIntoView({block:'start'});$('.admin-tools').focus();return;}
+  modal(`<h2>Вход организатора</h2><p>Войди по почте и паролю. Друзья голосуют по персональным кодам.</p><form><label for="email">Почта (логин)</label><input id="email" name="email" type="email" autocomplete="username" required placeholder="you@example.com"><label for="password">Пароль</label><input id="password" name="password" type="password" autocomplete="current-password" required><div class="form-error" role="alert"></div><div class="form-actions"><button class="button dark" type="submit">Войти</button><button class="button" type="button" id="reset-password">Задать / сбросить пароль</button></div></form>`);
+  $('#reset-password').onclick=()=>recoveryDialog($('#email').value.trim());
+  formHandler(async data=>{
+    const result=await request('/auth/v1/token?grant_type=password',{email:data.get('email').trim().toLowerCase(),password:data.get('password')},{authenticated:false});
+    session=result;session.expires_at ||= Math.floor(Date.now()/1000)+result.expires_in;
+    try{
+      const next=await rpc('state',{p_code:code||null});
+      if(!next.organizer)throw new Error('У этой почты нет прав организатора.');
+      save('bracket-session',session);passwordRecovery=false;save('bracket-password-recovery',null);
+      state=next;selected=state.categories.some(c=>c.id===selected)?selected:state.categories[0]?.id;render();dialog.close();toast('Вход выполнен. Кнопки управления — над сеткой.');
+    }catch(error){session=null;save('bracket-session',null);throw error;}
+  });
+}
+function recoveryDialog(email=''){
+  modal(`<h2>Задать или сбросить пароль</h2><p>Укажи почту организатора. Пришлём ссылку, по которой можно установить первый пароль или заменить забытый.</p><form><label for="recovery-email">Почта организатора</label><input id="recovery-email" name="email" type="email" autocomplete="username" required value="${escape(email)}"><div class="form-error" role="alert"></div><div class="form-actions"><button class="button dark" type="submit">Отправить ссылку</button><button class="button" type="button" id="back-login">Назад ко входу</button></div></form>`);
+  $('#back-login').onclick=adminDialog;
+  formHandler(async data=>{
+    await request('/auth/v1/recover?redirect_to='+encodeURIComponent('https://voltoran.github.io/friends-bracket/'),{email:data.get('email').trim().toLowerCase()},{authenticated:false});
+    modal('<h2>Проверь почту</h2><p>Если аккаунт с этой почтой существует, на него придёт письмо. Открой ссылку и задай пароль на сайте. Затем можно будет входить по почте и паролю.</p><p>Если письма нет, проверь «Спам». Ссылка одноразовая; не пересылай её другим.</p><button class="button" id="back-login">Назад ко входу</button>');$('#back-login').onclick=adminDialog;
+  });
+}
+function passwordDialog(){
+  if(!session||!state?.organizer){adminDialog();return;}
+  modal(`<h2>${passwordRecovery?'Задай пароль':'Сменить пароль'}</h2><p>Минимум 8 символов. Используй пароль, который не повторяется на других сайтах.</p><form><label for="new-password">Новый пароль</label><input id="new-password" name="password" type="password" autocomplete="new-password" minlength="8" required><label for="repeat-password">Повтори пароль</label><input id="repeat-password" name="repeat" type="password" autocomplete="new-password" minlength="8" required><div class="form-error" role="alert"></div><div class="form-actions"><button class="button dark" type="submit">Сохранить пароль</button></div></form>`);
+  formHandler(async data=>{
+    const password=data.get('password');
+    if(password.length<8)throw new Error('Пароль должен содержать минимум 8 символов.');
+    if(password!==data.get('repeat'))throw new Error('Пароли не совпадают.');
+    await request('/auth/v1/user',{password},{method:'PUT'});
+    passwordRecovery=false;save('bracket-password-recovery',null);dialog.close();toast('Пароль сохранён. Теперь входи по почте и паролю.');
+  });
 }
 function newCategory(){
   modal(`<h2>Создать голосование</h2><p>Добавь 4, 8 или 16 участников — по одному на строку. Соседние строки образуют пары первого раунда.</p><form><label for="category-name">Название голосования</label><input id="category-name" name="name" maxlength="60" required placeholder="Например, тема следующего джема"><label for="entries">Участники</label><textarea id="entries" name="entries" required placeholder="Первый участник&#10;Второй участник&#10;Третий участник&#10;Четвёртый участник"></textarea><div class="form-error" role="alert"></div><div class="form-actions"><button class="button dark" type="submit">Создать сетку</button></div></form>`);
@@ -137,7 +171,7 @@ $('#bracket').onclick=async event=>{
   catch(e){toast(e.message);}finally{busy=false;await refresh();render();}
 };
 $('#admin-tools').onclick=event=>{const action=event.target.closest('[data-action]')?.dataset.action;if(!action)return;
-  if(action==='new-category')newCategory();else if(action==='voters')votersDialog();else if(action==='trash')trashDialog();else if(action==='delete')deleteDialog();else if(action==='rename')renameDialog();else if(action==='entries')entriesDialog();else if(action==='logout'){session=null;save('bracket-session',null);refresh();toast('Выход из управления выполнен');}else confirmAction(action);
+  if(action==='new-category')newCategory();else if(action==='voters')votersDialog();else if(action==='trash')trashDialog();else if(action==='delete')deleteDialog();else if(action==='rename')renameDialog();else if(action==='entries')entriesDialog();else if(action==='password')passwordDialog();else if(action==='logout'){session=null;save('bracket-session',null);passwordRecovery=false;save('bracket-password-recovery',null);refresh();toast('Выход из управления выполнен');}else confirmAction(action);
 };
 dialog.addEventListener('click',async event=>{
   const toggle=event.target.closest('[data-toggle-voter]');
@@ -147,11 +181,13 @@ dialog.addEventListener('click',async event=>{
   const edit=event.target.closest('[data-edit-entry]');if(edit)editEntry(edit.dataset.editEntry,Number(edit.dataset.side));
 });
 $('#join').onclick=joinDialog;$('#admin-open').onclick=adminDialog;$('#refresh').onclick=()=>refresh();$('#dialog-close').onclick=()=>dialog.close();
+dialog.addEventListener('close',()=>{if(!dialog.open)$('#dialog-content').innerHTML='';});
 $('#rules').onclick=()=>modal(`<h2>Как выбираем победителя</h2><ol class="rules-list"><li>У каждой категории своя сетка. В паре два участника — выбирай одного.</li><li>Персональный код даёт один голос в каждой паре текущего раунда. Изменить отправленный голос нельзя.</li><li>Организатор закрывает раунд. Победитель каждой пары проходит дальше.</li><li>При ничьей организатор может открыть переголосование. В таких парах можно голосовать снова.</li><li>Код предназначен одному человеку. Передав его, ты передаёшь право своего голоса.</li></ol><p>Результаты видны всем по ссылке. Имена голосующих и персональные коды публично не отображаются. Код хранится в этой вкладке до выхода; другая вкладка может попросить ввести его снова.</p>`);
 await refresh();
 if(signedInFromEmail){
   if(state?.organizer)toast('Вход выполнен. Кнопки управления — над сеткой.');
-  else if(state){session=null;save('bracket-session',null);toast('У этой почты нет прав организатора.');}
+  else if(state){session=null;save('bracket-session',null);passwordRecovery=false;save('bracket-password-recovery',null);toast('У этой почты нет прав организатора.');}
 }
+if(passwordRecovery&&state?.organizer)passwordDialog();
 setInterval(()=>{if(!document.hidden&&!dialog.open&&!busy)refresh({silent:true});},20000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy)refresh({silent:true});});
