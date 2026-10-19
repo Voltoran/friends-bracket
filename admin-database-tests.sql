@@ -1,17 +1,22 @@
 -- Synthetic credentials and records exist only within this rolled-back transaction.
+-- Hosted SQL Editor cannot LOAD safeupdate. Assert explicit delete filters
+-- in the deployed functions as well as testing their complete behavior.
 begin;
 do $$
 declare setup_key text:=repeat('a',64); token text; token2 text; token3 text; result jsonb; c uuid; m uuid; voter text; i int;
 begin
+  if position('delete from bracket_private.admin_sessions where true' in lower(pg_get_functiondef('public.bracket_admin_setup(text,text)'::regprocedure)))=0
+    or position('delete from bracket_private.admin_sessions where true' in lower(pg_get_functiondef('public.bracket_admin(text,text,jsonb)'::regprocedure)))=0
+    then raise exception 'TEST: session revocation missing explicit WHERE'; end if;
   update bracket_private.admin_auth set password_hash=null,setup_hash=bracket_private.secret_hash(setup_key),
-    setup_expires_at=now()+interval '1 hour',failures=0,locked_until=null,window_started=now();
+    setup_expires_at=now()+interval '1 hour',failures=0,locked_until=null,window_started=now() where singleton;
   if public.bracket_admin_status(null)->>'setup_allowed'<>'false' then raise exception 'TEST: public setup allowed'; end if;
   if public.bracket_admin_status(setup_key)->>'setup_allowed'<>'true' then raise exception 'TEST: owner setup unavailable'; end if;
   if public.bracket_admin_setup(repeat('b',64),'Test-only-password-1')->>'error' is null then raise exception 'TEST: bad setup key'; end if;
   if public.bracket_admin_setup(null,'Test-only-password-1')->>'error' is null then raise exception 'TEST: null setup key'; end if;
-  update bracket_private.admin_auth set setup_expires_at=now()-interval '1 second';
+  update bracket_private.admin_auth set setup_expires_at=now()-interval '1 second' where singleton;
   if public.bracket_admin_setup(setup_key,'Test-only-password-1')->>'error' is null then raise exception 'TEST: expired setup key'; end if;
-  update bracket_private.admin_auth set setup_expires_at=now()+interval '1 hour';
+  update bracket_private.admin_auth set setup_expires_at=now()+interval '1 hour' where singleton;
   if public.bracket_admin_setup(setup_key,'short')->>'error' is null then raise exception 'TEST: weak password'; end if;
   result:=public.bracket_admin_setup(setup_key,'Test-only-password-1');token:=result->>'token';
   if token is null or length(token)<>64 then raise exception 'TEST: setup no session'; end if;
@@ -24,7 +29,7 @@ begin
   end loop;
   if (select failures from bracket_private.admin_auth)<>5 then raise exception 'TEST: attempts not recorded'; end if;
   if public.bracket_admin_login('Test-only-password-1')->>'error' is null then raise exception 'TEST: lockout bypass'; end if;
-  update bracket_private.admin_auth set locked_until=now()-interval '1 second',window_started=now()-interval '16 minutes';
+  update bracket_private.admin_auth set locked_until=now()-interval '1 second',window_started=now()-interval '16 minutes' where singleton;
   token2:=public.bracket_admin_login('Test-only-password-1')->>'token';
   if token2 is null then raise exception 'TEST: correct login'; end if;
   if public.bracket_admin(repeat('c',64),'state')->>'code'<>'admin_session_expired' then raise exception 'TEST: forged session'; end if;
@@ -59,4 +64,4 @@ begin
   if not has_function_privilege('anon','public.bracket_admin(text,text,jsonb)','execute') then raise exception 'TEST: gateway inaccessible'; end if;
 end $$;
 rollback;
-select 'PASS: private one-use setup, bcrypt, login, persistent attempt counter, lockout, gateway authorization, voter codes, password rotation, logout, expiry, grants; all test data rolled back' as result;
+select 'PASS: explicit WHERE in deployed session revocation, private one-use setup, bcrypt, login, lockout, gateway authorization, voter codes, password rotation, logout, expiry, grants; all test data rolled back' as result;

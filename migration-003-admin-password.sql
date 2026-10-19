@@ -83,7 +83,7 @@ begin
   if error is not null then return jsonb_build_object('error',error); end if;
   update bracket_private.admin_auth set password_hash=extensions.crypt(p_password,extensions.gen_salt('bf',12)),
     setup_hash=null,setup_expires_at=null,failures=0,window_started=now(),locked_until=null where singleton;
-  delete from bracket_private.admin_sessions;
+  delete from bracket_private.admin_sessions where true;
   return bracket_private.issue_admin_session();
 end $$;
 create function public.bracket_admin_login(p_password text) returns jsonb
@@ -133,7 +133,7 @@ begin
       end if;
       update bracket_private.admin_auth set password_hash=extensions.crypt(p_args->>'p_password',extensions.gen_salt('bf',12)),
         setup_hash=null,setup_expires_at=null where singleton;
-      delete from bracket_private.admin_sessions;
+      delete from bracket_private.admin_sessions where true;
       result:=bracket_private.issue_admin_session();
     else raise exception 'Неизвестное действие.';
   end case;
