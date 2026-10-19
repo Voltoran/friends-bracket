@@ -35,7 +35,7 @@ async function request(path,body,{authenticated=true,method='POST'}={}) {
   catch{throw new Error('Не удалось связаться с сервером. Проверь интернет и попробуй ещё раз.');}
   const data=await response.json().catch(()=>null);
   if(!response.ok) {
-    if(response.status===429) throw new Error('Слишком много запросов. Подожди минуту и повтори.');
+    if(response.status===429) throw new Error(path.startsWith('/auth/v1/recover')?'Сервис временно ограничил отправку писем. Попробуй позже. Если у тебя осталась действующая ссылка для входа, открой её и нажми «Сменить пароль» в управлении.':'Слишком много запросов. Подожди и попробуй позже.');
     const message=data?.msg || data?.message || data?.error_description || data?.error;
     if(data?.error_code==='invalid_credentials'||/Invalid login credentials/i.test(message||'')) throw new Error('Неверная почта или пароль. Для первого входа нажми «Задать / сбросить пароль».');
     if(data?.error_code==='email_not_confirmed') throw new Error('Почта ещё не подтверждена. Открой ссылку из письма для установки пароля.');
