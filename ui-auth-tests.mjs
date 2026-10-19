@@ -23,7 +23,7 @@ async function app({hash='',configured=true,failLogin=false}={}){
     }
     throw new Error('Unexpected request');
   }};
-  const api=await vm.runInNewContext(`(async()=>{${source}\nreturn {adminDialog,passwordDialog,joinDialog,logoutAdmin,refresh,rpc,getState:()=>state};})()`,context);
+  const api=await vm.runInNewContext(`(async()=>{${source}\nreturn {adminDialog,passwordDialog,joinDialog,logoutAdmin,refresh,rpc,newCategory,matchHtml,entriesDialog,setTestCategory:c=>{state={organizer:true,voter:{label:'Test'},categories:[c]};selected=c.id;render();},getState:()=>state};})()`,context);
   return {...api,get,storage,calls,context,expire:()=>{expired=true;},submit:values=>get('form').handlers.submit({preventDefault(){},target:{...values,querySelector:get}})};
 }
 let a=await app({configured:false});await a.adminDialog();assert.match(a.get('#dialog-content').innerHTML,/Первая настройка/);assert.ok(!a.get('#dialog-content').innerHTML.includes('type="password"'));
@@ -37,3 +37,12 @@ a=await app();await a.adminDialog();await a.submit({password:'test-password'});a
 a.expire();await a.refresh();assert.equal(a.getState().organizer,false);assert.ok(!a.storage.has('bracket-admin-session'));await assert.rejects(()=>a.rpc('issue_code',{p_label:'Forbidden'}),/Войди/);
 a=await app();a.joinDialog();await a.submit({code:'TEST-CODE'});assert.equal(a.getState().voter.label,'Test friend');assert.equal(a.storage.get('bracket-code'),'"TEST-CODE"');assert.ok(a.calls.every(c=>!c.url.includes('/auth/v1/')));
 console.log('PASS: setup gated, setup key removed, password confirmation/length, no password storage, password-only login, server logout, password change, expired-session cleanup, admin action guard, friend code login. HTTP mocked.');
+a=await app();await a.adminDialog();await a.submit({password:'test-password'});
+for(const n of [4,5,11,16]){a.newCategory();await a.submit({name:'Size test',entries:Array.from({length:n},(_,i)=>'Option '+i).join('\n')});assert.ok(a.calls.some(c=>c.body.p_action==='create_category'&&c.body.p_args.p_entries.length===n));}
+for(const n of [3,17]){a.newCategory();const before=a.calls.length;await a.submit({name:'Invalid',entries:Array.from({length:n},(_,i)=>'Option '+i).join('\n')});assert.equal(a.calls.length,before);assert.match(a.get('.form-error').textContent,/от 4 до 16/);}
+const fixture={id:'fixture',name:'11 options',round:1,rounds:4,status:'active',matches:Array.from({length:8},(_,i)=>({id:String(i),round:1,position:i,a:'Option '+i,b:i<5?null:'Opponent '+i,winner:i<5?1:null,votes_a:0,votes_b:0,my_vote:null,ballot:1}))};
+a.setTestCategory(fixture);assert.match(a.get('#summary').innerHTML,/11 участников/);assert.match(a.get('#summary').innerHTML,/из 3 пар/);
+const byeHtml=a.matchHtml(fixture,fixture.matches[0]);assert.match(byeHtml,/Автопроход/);assert.match(byeHtml,/Без соперника/);assert.equal((byeHtml.match(/ disabled/g)||[]).length,2);
+const pendingHtml=a.matchHtml(fixture,{...fixture.matches[0],round:2,a:'Waiting',b:null,winner:null});assert.equal((pendingHtml.match(/ disabled/g)||[]).length,2);
+a.entriesDialog();assert.equal((a.get('#dialog-content').innerHTML.match(/data-edit-entry=/g)||[]).length,11);
+console.log('PASS: creating 4/5/11/16 entries, rejecting 3/17, accurate entrant and playable-pair counts, disabled bye/pending matches, no empty-slot edits. HTTP mocked.');
