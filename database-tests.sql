@@ -1,0 +1,40 @@
+-- Transactional integration tests. All test identities, votes and tournaments roll back.
+begin;
+do $$
+declare test_user uuid:=gen_random_uuid(); c uuid; m uuid; code1 text; code2 text; a uuid; n int;
+begin
+  insert into auth.users(id,email,email_confirmed_at) values(test_user,'integration-test@example.invalid',now());
+  insert into bracket_private.organizers values('integration-test@example.invalid');
+  perform set_config('request.jwt.claim.sub',test_user::text,true);
+  perform set_config('request.jwt.claims',json_build_object('sub',test_user,'role','authenticated')::text,true);
+  c:=public.bracket_create_category('TEST',array['A','B','C','D']);
+  if (select count(*) from bracket_private.matches where category_id=c)<>3 then raise exception 'TEST: bracket size'; end if;
+  code1:=public.bracket_issue_code('Test voter one'); code2:=public.bracket_issue_code('Test voter two');
+  select id into m from bracket_private.matches where category_id=c and round=1 and position=0;
+  begin perform public.bracket_vote(code1,m,1); raise exception 'TEST: draft allowed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
+  perform public.bracket_start(c);
+  perform public.bracket_vote(code1,m,1);
+  begin perform public.bracket_vote(code1,m,2); raise exception 'TEST: duplicate allowed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
+  begin perform public.bracket_vote('INVALID',m,1); raise exception 'TEST: invalid code'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
+  perform public.bracket_vote(code2,m,2);
+  begin perform public.bracket_close_round(c); raise exception 'TEST: tie closed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
+  n:=public.bracket_runoff(c); if n<>1 then raise exception 'TEST: runoff count'; end if;
+  if (select count(*) from bracket_private.votes where match_id=m)<>2 then raise exception 'TEST: history lost'; end if;
+  perform public.bracket_vote(code1,m,2);
+  select id into a from bracket_private.matches where category_id=c and round=1 and position=1;
+  perform public.bracket_vote(code1,a,1);
+  perform public.bracket_close_round(c);
+  if (select side_a from bracket_private.matches where category_id=c and round=2)<>'B' or (select side_b from bracket_private.matches where category_id=c and round=2)<>'C' then raise exception 'TEST: propagation'; end if;
+  begin perform public.bracket_vote(code2,m,1); raise exception 'TEST: closed vote allowed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
+  select id into a from bracket_private.matches where category_id=c and round=2;
+  perform public.bracket_vote(code1,a,1);perform public.bracket_close_round(c);
+  if (select status from bracket_private.categories where id=c)<>'finished' then raise exception 'TEST: not finished'; end if;
+  if public.bracket_state(code1)->'voter'->>'label'<>'Test voter one' then raise exception 'TEST: voter state'; end if;
+  perform set_config('request.jwt.claim.sub','',true);perform set_config('request.jwt.claims','{}',true);
+  if public.bracket_state(null)->>'organizer'<>'false' then raise exception 'TEST: guest organizer'; end if;
+  begin perform public.bracket_issue_code('Unauthorized');raise exception 'TEST: unauthorized issuance';exception when insufficient_privilege then null;end;
+  if has_function_privilege('anon','public.bracket_issue_code(text)','execute') then raise exception 'TEST: anonymous grant'; end if;
+  if has_table_privilege('anon','bracket_private.votes','select') then raise exception 'TEST: anonymous table access'; end if;
+end $$;
+rollback;
+select 'PASS: bracket creation, organizer access, draft guard, duplicate votes, invalid code, tie guard, runoff, archived votes, propagation, closed-round guard, final winner, public state, role permissions' as result;

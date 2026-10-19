@@ -1,0 +1,6 @@
+{
+  "name": "friends-bracket",
+  "private": true,
+  "type": "module",
+  "scripts": {"dev": "node serve.mjs", "check": "node --check app.js"}
+}
