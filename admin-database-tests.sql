@@ -1,0 +1,62 @@
+-- Synthetic credentials and records exist only within this rolled-back transaction.
+begin;
+do $$
+declare setup_key text:=repeat('a',64); token text; token2 text; token3 text; result jsonb; c uuid; m uuid; voter text; i int;
+begin
+  update bracket_private.admin_auth set password_hash=null,setup_hash=bracket_private.secret_hash(setup_key),
+    setup_expires_at=now()+interval '1 hour',failures=0,locked_until=null,window_started=now();
+  if public.bracket_admin_status(null)->>'setup_allowed'<>'false' then raise exception 'TEST: public setup allowed'; end if;
+  if public.bracket_admin_status(setup_key)->>'setup_allowed'<>'true' then raise exception 'TEST: owner setup unavailable'; end if;
+  if public.bracket_admin_setup(repeat('b',64),'Test-only-password-1')->>'error' is null then raise exception 'TEST: bad setup key'; end if;
+  if public.bracket_admin_setup(null,'Test-only-password-1')->>'error' is null then raise exception 'TEST: null setup key'; end if;
+  update bracket_private.admin_auth set setup_expires_at=now()-interval '1 second';
+  if public.bracket_admin_setup(setup_key,'Test-only-password-1')->>'error' is null then raise exception 'TEST: expired setup key'; end if;
+  update bracket_private.admin_auth set setup_expires_at=now()+interval '1 hour';
+  if public.bracket_admin_setup(setup_key,'short')->>'error' is null then raise exception 'TEST: weak password'; end if;
+  result:=public.bracket_admin_setup(setup_key,'Test-only-password-1');token:=result->>'token';
+  if token is null or length(token)<>64 then raise exception 'TEST: setup no session'; end if;
+  if (select password_hash from bracket_private.admin_auth)='Test-only-password-1' then raise exception 'TEST: plaintext password'; end if;
+  if public.bracket_admin_setup(setup_key,'Test-only-password-2')->>'error' is null then raise exception 'TEST: setup reused'; end if;
+  if public.bracket_admin_status(setup_key)->>'setup_allowed'<>'false' then raise exception 'TEST: setup still exposed'; end if;
+  if (select setup_hash from bracket_private.admin_auth) is not null then raise exception 'TEST: setup not consumed'; end if;
+  for i in 1..5 loop
+    if public.bracket_admin_login('wrong')->>'error' is null then raise exception 'TEST: incorrect login'; end if;
+  end loop;
+  if (select failures from bracket_private.admin_auth)<>5 then raise exception 'TEST: attempts not recorded'; end if;
+  if public.bracket_admin_login('Test-only-password-1')->>'error' is null then raise exception 'TEST: lockout bypass'; end if;
+  update bracket_private.admin_auth set locked_until=now()-interval '1 second',window_started=now()-interval '16 minutes';
+  token2:=public.bracket_admin_login('Test-only-password-1')->>'token';
+  if token2 is null then raise exception 'TEST: correct login'; end if;
+  if public.bracket_admin(repeat('c',64),'state')->>'code'<>'admin_session_expired' then raise exception 'TEST: forged session'; end if;
+  if public.bracket_state(null)->>'organizer'<>'false' then raise exception 'TEST: public organizer'; end if;
+  if public.bracket_admin(token,'state')->'data'->>'organizer'<>'true' then raise exception 'TEST: admin state'; end if;
+  if public.bracket_state(null)->>'organizer'<>'false' then raise exception 'TEST: identity leaked beyond gateway'; end if;
+  c:=(public.bracket_admin(token,'create_category',jsonb_build_object('p_name','TEST admin gateway','p_entries',array['A','B','C','D']))->>'data')::uuid;
+  perform public.bracket_admin(token,'rename',jsonb_build_object('p_category',c,'p_name','TEST renamed'));
+  select id into m from bracket_private.matches where category_id=c and round=1 and position=0;
+  perform public.bracket_admin(token,'edit_entry',jsonb_build_object('p_match',m,'p_side',1,'p_name','Updated A'));
+  voter:=public.bracket_admin(token,'issue_code',jsonb_build_object('p_label','Test voter'))->>'data';
+  if voter is null then raise exception 'TEST: invite gateway'; end if;
+  perform public.bracket_admin(token,'start',jsonb_build_object('p_category',c));
+  perform public.bracket_vote(voter,m,1);
+  if public.bracket_state(voter)->'voter'->>'label'<>'Test voter' then raise exception 'TEST: voter code broken'; end if;
+  perform public.bracket_admin(token,'delete_category',jsonb_build_object('p_category',c));
+  if not exists(select 1 from jsonb_array_elements(public.bracket_admin(token,'trash')->'data') x where x->>'id'=c::text) then raise exception 'TEST: trash gateway'; end if;
+  perform public.bracket_admin(token,'restore_category',jsonb_build_object('p_category',c));
+  if public.bracket_admin(token,'change_password',jsonb_build_object('p_current_password','wrong','p_password','Test-only-password-2'))->>'error' is null then raise exception 'TEST: changed without old password'; end if;
+  token3:=public.bracket_admin(token,'change_password',jsonb_build_object('p_current_password','Test-only-password-1','p_password','Test-only-password-2'))->'data'->>'token';
+  if token3 is null then raise exception 'TEST: change password failed'; end if;
+  if public.bracket_admin(token2,'state')->>'code'<>'admin_session_expired' then raise exception 'TEST: old session survived change'; end if;
+  if public.bracket_admin_login('Test-only-password-1')->>'error' is null then raise exception 'TEST: old password accepted'; end if;
+  perform public.bracket_admin(token3,'logout');
+  if public.bracket_admin(token3,'state')->>'code'<>'admin_session_expired' then raise exception 'TEST: logout did not revoke'; end if;
+  token3:=public.bracket_admin_login('Test-only-password-2')->>'token';
+  update bracket_private.admin_sessions set expires_at=now()-interval '1 second' where token_hash=bracket_private.secret_hash(token3);
+  if public.bracket_admin(token3,'state')->>'code'<>'admin_session_expired' then raise exception 'TEST: expired session'; end if;
+  if has_function_privilege('anon','public.bracket_issue_code(text)','execute') or has_function_privilege('authenticated','public.bracket_issue_code(text)','execute') then raise exception 'TEST: direct admin RPC grant'; end if;
+  if has_function_privilege('anon','bracket_private.issue_admin_session()','execute') then raise exception 'TEST: session mint exposed'; end if;
+  if has_table_privilege('anon','bracket_private.admin_auth','select') or has_table_privilege('authenticated','bracket_private.admin_sessions','select') then raise exception 'TEST: credentials readable'; end if;
+  if not has_function_privilege('anon','public.bracket_admin(text,text,jsonb)','execute') then raise exception 'TEST: gateway inaccessible'; end if;
+end $$;
+rollback;
+select 'PASS: private one-use setup, bcrypt, login, persistent attempt counter, lockout, gateway authorization, voter codes, password rotation, logout, expiry, grants; all test data rolled back' as result;

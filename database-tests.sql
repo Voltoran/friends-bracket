@@ -3,10 +3,8 @@ begin;
 do $$
 declare test_user uuid:=gen_random_uuid(); c uuid; m uuid; code1 text; code2 text; a uuid; n int;
 begin
-  insert into auth.users(id,email,email_confirmed_at) values(test_user,'integration-test@example.invalid',now());
-  insert into bracket_private.organizers values('integration-test@example.invalid');
-  perform set_config('request.jwt.claim.sub',test_user::text,true);
-  perform set_config('request.jwt.claims',json_build_object('sub',test_user,'role','authenticated')::text,true);
+  insert into bracket_private.admin_sessions(token_hash,expires_at) values(bracket_private.secret_hash(test_user::text),now()+interval '1 hour');
+  perform set_config('bracket.admin_token',test_user::text,true);
   c:=public.bracket_create_category('TEST',array['A','B','C','D']);
   if (select count(*) from bracket_private.matches where category_id=c)<>3 then raise exception 'TEST: bracket size'; end if;
   code1:=public.bracket_issue_code('Test voter one'); code2:=public.bracket_issue_code('Test voter two');
@@ -44,7 +42,7 @@ begin
   begin perform public.bracket_vote(code2,m,2);raise exception 'TEST: vote on deleted category';exception when others then if sqlerrm like 'TEST:%' then raise; end if;end;
   begin perform public.bracket_close_round(c);raise exception 'TEST: deleted category advanced';exception when others then if sqlerrm like 'TEST:%' then raise; end if;end;
   perform public.bracket_restore_category(c);perform public.bracket_vote(code2,m,2);
-  perform set_config('request.jwt.claim.sub','',true);perform set_config('request.jwt.claims','{}',true);
+  perform set_config('bracket.admin_token','',true);
   if public.bracket_state(null)->>'organizer'<>'false' then raise exception 'TEST: guest organizer'; end if;
   begin perform public.bracket_issue_code('Unauthorized');raise exception 'TEST: unauthorized issuance';exception when insufficient_privilege then null;end;
   begin perform public.bracket_delete_category(c);raise exception 'TEST: guest deletion';exception when insufficient_privilege then null;end;

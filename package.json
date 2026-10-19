@@ -2,5 +2,5 @@
   "name": "friends-bracket",
   "private": true,
   "type": "module",
-  "scripts": {"dev": "node serve.mjs", "check": "node --check app.js"}
+  "scripts": {"dev": "node serve.mjs", "check": "node --check app.js", "test": "node ui-auth-tests.mjs"}
 }
