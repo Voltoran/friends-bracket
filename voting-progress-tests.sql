@@ -45,7 +45,8 @@ begin
     'votes',(select jsonb_agg(to_jsonb(x) order by voter_id,match_id,ballot) from bracket_private.votes x),
     'voters',(select jsonb_agg(to_jsonb(x) order by id) from bracket_private.voters x)) into after_data;
   if before_data is distinct from after_data then raise exception 'TEST: reporting changed data'; end if;
-  if public.bracket_runoff(c)<>1 then raise exception 'TEST: runoff setup'; end if;
+  -- Historical ballot fixture; new runoffs are disabled by migration 007.
+  update bracket_private.matches set ballot=ballot+1 where id=first_m;
   report:=bracket_private.voting_progress(c);
   select x into item from jsonb_array_elements(report->'voters') x where x->>'id'=ids[1]::text;
   if item->>'voted'<>'1' then raise exception 'TEST: archived vote counted'; end if;

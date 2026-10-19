@@ -58,3 +58,13 @@ assert.equal(a.progressStatus({voted:0},{...progressReport,total:0}),'Нет п�
 progressReport.voters=[];await a.progressDialog();assert.match(a.get('#dialog-content').innerHTML,/Пока никто не приглашён/);
 await a.logoutAdmin();count=a.calls.length;await a.progressDialog('fixture');assert.equal(a.calls.length,count);assert.ok(!a.get('#admin-tools').innerHTML.includes('Кто проголосовал'));
 console.log('PASS: private participation dialog, escaped labels, statuses, disabled codes, refresh, empty/draft states and guest guard. HTTP mocked.');
+a=await app();await a.adminDialog();await a.submit({password:'test-password'});a.setTestCategory(fixture);
+assert.ok(!a.get('#admin-tools').innerHTML.includes('data-action="runoff"'));
+assert.ok(a.get('#admin-tools').innerHTML.includes('Завершить раунд'));
+a.get('#admin-tools').onclick({target:{closest:()=>({dataset:{action:'close'}})}});
+assert.match(a.get('#dialog-content').innerHTML,/победитель выбирается случайно/);assert.match(a.get('#dialog-content').innerHTML,/пара без голосов/);
+assert.ok(!a.calls.some(c=>c.body.p_action==='close_round'));
+await a.submit({});assert.ok(a.calls.some(c=>c.body.p_action==='close_round'&&c.body.p_args.p_category==='fixture'));
+assert.match(a.matchHtml(fixture,{...fixture.matches[5],winner:2,random:true,votes_a:1,votes_b:1}),/Ничья · победитель выбран случайно/);
+assert.ok(!a.matchHtml(fixture,{...fixture.matches[5],winner:1,random:false}).includes('победитель выбран случайно'));
+console.log('PASS: no runoff button, explicit random tie confirmation, close only on submit, persisted tie reason display. HTTP mocked.');

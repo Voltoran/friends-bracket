@@ -15,8 +15,9 @@ begin
   begin perform public.bracket_vote(code1,m,2); raise exception 'TEST: duplicate allowed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
   begin perform public.bracket_vote('INVALID',m,1); raise exception 'TEST: invalid code'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
   perform public.bracket_vote(code2,m,2);
-  begin perform public.bracket_close_round(c); raise exception 'TEST: tie closed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
-  n:=public.bracket_runoff(c); if n<>1 then raise exception 'TEST: runoff count'; end if;
+  begin perform public.bracket_close_round(c); raise exception 'TEST: unvoted pair closed'; exception when others then if sqlerrm like 'TEST:%' then raise; end if; end;
+  -- Simulate a historical runoff to verify existing ballot archives remain usable.
+  update bracket_private.matches set ballot=ballot+1 where id=m;
   if (select count(*) from bracket_private.votes where match_id=m)<>2 then raise exception 'TEST: history lost'; end if;
   perform public.bracket_vote(code1,m,2);
   select id into a from bracket_private.matches where category_id=c and round=1 and position=1;
@@ -52,4 +53,4 @@ begin
   if has_table_privilege('anon','bracket_private.votes','select') then raise exception 'TEST: anonymous table access'; end if;
 end $$;
 rollback;
-select 'PASS: voting, rounds, ties, permissions, deletion hides category, trash, restoration preserves results, deleted categories reject votes and advancement, guests cannot delete or restore' as result;
+select 'PASS: voting, rounds, historical ballots, permissions, deletion hides category, trash, restoration preserves results, deleted categories reject votes and advancement, guests cannot delete or restore' as result;
