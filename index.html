@@ -2,26 +2,24 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f5f6ef"><meta name="description" content="Выбираем любимое вместе. Турнирные сетки и голосование в кругу друзей.">
-  <meta name="referrer" content="no-referrer">
-  <title>Круг друзей — выбираем любимое</title>
+  <meta name="theme-color" content="#ffffff"><meta name="description" content="Голосования на выбывание для друзей."><meta name="referrer" content="no-referrer">
+  <title>Темы для Tavern Gamejam</title>
   <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css">
   <script type="module" src="./app.js"></script>
 </head>
 <body>
-  <a href="#main" class="skip-link">К сетке голосования</a>
-  <header class="header"><a href="./" class="brand"><span class="brand-symbol">к.</span><span>круг друзей<span class="brand-caption">МАЛЕНЬКИЙ КРУГ. БОЛЬШОЙ ВЫБОР.</span></span></a><div class="header-actions"><span class="live-indicator" id="connection">Подключаемся</span><button class="button dark" id="join">Войти по коду <span aria-hidden="true">↗</span></button></div></header>
+  <a href="#main" class="skip-link">К голосованию</a>
+  <header class="header"><a href="./" class="brand">Темы для Tavern Gamejam</a><div class="header-actions"><button class="button" id="admin-open">Организатор</button><button class="button dark" id="join">Войти по коду</button></div></header>
   <div class="page-layout">
-    <aside class="sidebar" aria-label="Категории"><div class="sidebar-heading"><span class="eyebrow">НАШИ ТУРНИРЫ</span><span id="category-count" class="count">0</span></div><nav id="categories" aria-label="Выбор категории"><div class="loading-line"></div></nav><button class="sidebar-admin" id="admin-open"><span aria-hidden="true">⚙</span> Организатор</button><div class="sidebar-note"><span class="sparkle" aria-hidden="true">✳</span><p>Хороший повод<br>поспорить с друзьями.</p><span>Пусть решает большинство.</span></div></aside>
+    <aside class="sidebar" aria-label="Голосования"><div class="sidebar-heading"><span>Голосования</span><span id="category-count" class="count">0</span></div><nav id="categories" aria-label="Выбор голосования"><span class="muted">Загрузка…</span></nav></aside>
     <main id="main" tabindex="-1">
-      <section class="hero"><div><div class="eyebrow"><span class="small-dot"></span> ВЫБИРАЕМ ВМЕСТЕ</div><h1>Один круг.<br>Один победитель<span class="green-dot">.</span></h1><p>Выбирай фаворитов в парах.<br>Ваши голоса решают, кто пройдёт дальше.</p></div><div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="art-star">✳</div><div class="art-label">ВЫБОР ЗА ВАМИ <span>↗</span></div></div></section>
       <div id="notice" class="notice" hidden></div>
-      <section class="tournament" aria-labelledby="tournament-title"><div class="section-top"><div><div class="eyebrow" id="tournament-kicker">ТУРНИРНАЯ СЕТКА</div><h2 id="tournament-title">Загружаем турниры…</h2></div><div class="section-actions"><span id="tournament-status" class="badge"></span><button class="icon-button" id="refresh" aria-label="Обновить результаты" title="Обновить результаты">↻</button></div></div><div id="summary" class="summary"></div><div id="winner-banner"></div><div id="bracket" class="bracket" aria-label="Турнирная сетка"></div><div id="admin-tools"></div></section>
-      <section class="how-it-works"><div><span>01</span><p><strong>Выбери категорию</strong>У каждой — своя сетка.</p></div><div><span>02</span><p><strong>Поддержи фаворита</strong>Один голос в каждой паре.</p></div><div><span>03</span><p><strong>Дождись нового раунда</strong>Победители идут дальше.</p></div></section>
-      <footer><span>круг друзей © 2026</span><span>Создано для ваших «а давайте выберем…»</span><button class="text-button" id="rules">Правила</button></footer>
+      <div id="admin-tools"></div>
+      <section class="tournament" aria-labelledby="tournament-title"><div class="section-top"><h1 id="tournament-title">Загружаем голосования…</h1><div class="section-actions"><span id="tournament-status" class="badge"></span><button class="icon-button" id="refresh" aria-label="Обновить результаты" title="Обновить результаты">↻</button></div></div><div id="summary" class="summary"></div><div id="winner-banner"></div><div id="bracket" class="bracket" aria-label="Турнирная сетка"></div></section>
+      <footer><span id="connection">Подключаемся</span><button class="text-button" id="rules">Правила голосования</button></footer>
     </main>
   </div>
-  <dialog id="dialog"><div class="dialog-head"><span class="brand-symbol">к.</span><button class="icon-button" id="dialog-close" aria-label="Закрыть окно">×</button></div><div id="dialog-content"></div></dialog>
+  <dialog id="dialog"><div class="dialog-head"><button class="icon-button" id="dialog-close" aria-label="Закрыть окно">×</button></div><div id="dialog-content"></div></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

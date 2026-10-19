@@ -8,7 +8,7 @@ create table bracket_private.categories (
   id uuid primary key default gen_random_uuid(), name text not null check(length(name) between 1 and 60),
   status text not null default 'draft' check(status in ('draft','active','finished')),
   current_round int not null default 1, rounds int not null check(rounds between 2 and 4),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(), deleted_at timestamptz
 );
 create table bracket_private.matches (
   id uuid primary key default gen_random_uuid(), category_id uuid not null references bracket_private.categories on delete cascade,
@@ -54,7 +54,7 @@ begin
         'votes_a',(select count(*) from bracket_private.votes v where v.match_id=m.id and v.ballot=m.ballot and v.choice=1),
         'votes_b',(select count(*) from bracket_private.votes v where v.match_id=m.id and v.ballot=m.ballot and v.choice=2),
         'my_vote',(select v.choice from bracket_private.votes v where v.match_id=m.id and v.ballot=m.ballot and v.voter_id=person.id)) order by m.round,m.position)
-        from bracket_private.matches m where m.category_id=c.id)) order by c.created_at,c.id) from bracket_private.categories c),'[]'::jsonb)) into result;
+        from bracket_private.matches m where m.category_id=c.id)) order by c.created_at,c.id) from bracket_private.categories c where c.deleted_at is null),'[]'::jsonb)) into result;
   return result;
 end $$;
 
@@ -66,7 +66,7 @@ begin
   select category_id into category_key from bracket_private.matches where id=p_match;
   select * into category from bracket_private.categories where id=category_key for update;
   select * into game from bracket_private.matches where id=p_match;
-  if game.id is null or category.status <> 'active' or game.round <> category.current_round or game.winner is not null then raise exception 'Голосование в этой паре закрыто.'; end if;
+  if game.id is null or category.deleted_at is not null or category.status <> 'active' or game.round <> category.current_round or game.winner is not null then raise exception 'Голосование в этой паре закрыто.'; end if;
   if p_choice not in (1,2) or p_choice is null or game.side_a is null or game.side_b is null then raise exception 'Выбери участника этой пары.'; end if;
   insert into bracket_private.votes(voter_id,match_id,ballot,choice) values(person,p_match,game.ballot,p_choice);
 exception when unique_violation then raise exception 'Твой голос в этой паре уже учтён.';
@@ -96,7 +96,8 @@ create function public.bracket_rename(p_category uuid,p_name text) returns void 
 begin
   perform bracket_private.require_organizer();
   if p_name is null or length(trim(p_name)) not between 1 and 60 then raise exception 'Название: от 1 до 60 символов.'; end if;
-  update bracket_private.categories set name=trim(p_name) where id=p_category;
+  update bracket_private.categories set name=trim(p_name) where id=p_category and deleted_at is null;
+  if not found then raise exception 'Голосование не найдено или удалено.'; end if;
 end $$;
 
 create function public.bracket_edit_entry(p_match uuid,p_side int,p_name text) returns void language plpgsql security definer set search_path = '' as $$
@@ -105,7 +106,7 @@ begin
   perform bracket_private.require_organizer();
   select * into m from bracket_private.matches where id=p_match;
   select * into c from bracket_private.categories where id=m.category_id for update;
-  if c.status <> 'draft' or m.round <> 1 or c.id is null then raise exception 'Участников можно менять только до старта.'; end if;
+  if c.deleted_at is not null or c.status <> 'draft' or m.round <> 1 or c.id is null then raise exception 'Участников можно менять только до старта.'; end if;
   if p_side not in (1,2) or p_side is null or p_name is null or length(trim(p_name)) not between 1 and 80 then raise exception 'Проверь имя участника.'; end if;
   if exists(select 1 from bracket_private.matches x where x.category_id=c.id and x.round=1 and
     ((lower(x.side_a)=lower(trim(p_name)) and not(x.id=p_match and p_side=1)) or
@@ -116,7 +117,7 @@ end $$;
 create function public.bracket_start(p_category uuid) returns void language plpgsql security definer set search_path = '' as $$
 begin
   perform bracket_private.require_organizer();
-  update bracket_private.categories set status='active' where id=p_category and status='draft';
+  update bracket_private.categories set status='active' where id=p_category and status='draft' and deleted_at is null;
   if not found then raise exception 'Категория уже запущена или не найдена.'; end if;
 end $$;
 
@@ -125,7 +126,7 @@ declare c bracket_private.categories; m bracket_private.matches; a int; b int; c
 begin
   perform bracket_private.require_organizer();
   select * into c from bracket_private.categories where id=p_category for update;
-  if c.id is null or c.status <> 'active' then raise exception 'Категория не открыта для голосования.'; end if;
+  if c.id is null or c.deleted_at is not null or c.status <> 'active' then raise exception 'Категория не открыта для голосования.'; end if;
   for m in select * from bracket_private.matches where category_id=c.id and round=c.current_round order by position loop
     select count(*) filter(where choice=1),count(*) filter(where choice=2) into a,b from bracket_private.votes where match_id=m.id and ballot=m.ballot;
     if a=b then raise exception 'Есть ничья или пара без голосов. Соберите голоса или запустите переголосование.'; end if;
@@ -145,7 +146,7 @@ declare c bracket_private.categories; m bracket_private.matches; a int; b int; c
 begin
   perform bracket_private.require_organizer();
   select * into c from bracket_private.categories where id=p_category for update;
-  if c.id is null or c.status <> 'active' then raise exception 'Категория не открыта для голосования.'; end if;
+  if c.id is null or c.deleted_at is not null or c.status <> 'active' then raise exception 'Категория не открыта для голосования.'; end if;
   for m in select * from bracket_private.matches where category_id=c.id and round=c.current_round loop
     select count(*) filter(where choice=1),count(*) filter(where choice=2) into a,b from bracket_private.votes where match_id=m.id and ballot=m.ballot;
     if a=b and a>0 then
@@ -183,5 +184,26 @@ revoke all on function public.bracket_state(text),public.bracket_vote(text,uuid,
 grant execute on function public.bracket_state(text),public.bracket_vote(text,uuid,int) to anon,authenticated;
 grant execute on function public.bracket_create_category(text,text[]),public.bracket_rename(uuid,text),public.bracket_edit_entry(uuid,int,text),
   public.bracket_start(uuid),public.bracket_close_round(uuid),public.bracket_runoff(uuid),public.bracket_issue_code(text),public.bracket_voters(),public.bracket_toggle_voter(uuid,boolean) to authenticated;
+
+create function public.bracket_delete_category(p_category uuid) returns void language plpgsql security definer set search_path = '' as $$
+begin
+  perform bracket_private.require_organizer();
+  update bracket_private.categories set deleted_at=now() where id=p_category and deleted_at is null;
+  if not found then raise exception 'Голосование уже удалено или не найдено.'; end if;
+end $$;
+create function public.bracket_restore_category(p_category uuid) returns void language plpgsql security definer set search_path = '' as $$
+begin
+  perform bracket_private.require_organizer();
+  update bracket_private.categories set deleted_at=null where id=p_category and deleted_at is not null;
+  if not found then raise exception 'Голосование не найдено в корзине.'; end if;
+end $$;
+create function public.bracket_trash() returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  perform bracket_private.require_organizer();
+  return coalesce((select jsonb_agg(jsonb_build_object('id',id,'name',name,'status',status) order by deleted_at desc) from bracket_private.categories where deleted_at is not null),'[]'::jsonb);
+end $$;
+revoke all on function public.bracket_delete_category(uuid),public.bracket_restore_category(uuid),public.bracket_trash() from public,anon,authenticated;
+grant execute on function public.bracket_delete_category(uuid),public.bracket_restore_category(uuid),public.bracket_trash() to authenticated;
+
 notify pgrst,'reload schema';
 commit;
