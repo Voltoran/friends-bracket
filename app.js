@@ -94,7 +94,7 @@ function matchHtml(c,m){
 function renderAdmin(){
   if(!state.organizer){$('#admin-tools').innerHTML='';return;}
   const c=category();
-  $('#admin-tools').innerHTML=`<div class="admin-tools" tabindex="-1"><div class="button-row"><button class="button dark" data-action="new-category">+ Создать голосование</button><button class="button" data-action="voters">Пригласить друзей</button><button class="button" data-action="trash">Корзина</button><button class="button" data-action="password">Сменить пароль</button><button class="button" data-action="logout">Выйти из управления</button></div>${c?`<div class="button-row category-actions"><span class="tools-label">Это голосование:</span><button class="button" data-action="rename">Переименовать</button>${c.status==='draft'?'<button class="button" data-action="entries">Участники</button><button class="button dark" data-action="start">Открыть голосование</button>':c.status==='active'?'<button class="button" data-action="runoff">Переголосование при ничьей</button><button class="button dark" data-action="close">Завершить раунд</button>':''}<button class="button danger" data-action="delete">Удалить</button></div>`:''}</div>`;
+  $('#admin-tools').innerHTML=`<div class="admin-tools" tabindex="-1"><div class="button-row"><button class="button dark" data-action="new-category">+ Создать голосование</button><button class="button" data-action="voters">Пригласить друзей</button><button class="button" data-action="trash">Корзина</button><button class="button" data-action="password">Сменить пароль</button><button class="button" data-action="logout">Выйти из управления</button></div>${c?`<div class="button-row category-actions"><span class="tools-label">Это голосование:</span><button class="button" data-action="rename">Переименовать</button><button class="button" data-action="progress">Кто проголосовал</button>${c.status==='draft'?'<button class="button" data-action="entries">Участники</button><button class="button dark" data-action="start">Открыть голосование</button>':c.status==='active'?'<button class="button" data-action="runoff">Переголосование при ничьей</button><button class="button dark" data-action="close">Завершить раунд</button>':''}<button class="button danger" data-action="delete">Удалить</button></div>`:''}</div>`;
 }
 function joinDialog(){
   if(state?.voter){code='';save('bracket-code',null);refresh();toast('Ты вышел из голосования');return;}
@@ -136,6 +136,23 @@ function newCategory(){
   modal(`<h2>Создать голосование</h2><p>Добавь от 4 до 16 вариантов — по одному на строку. Если сетка неполная, первые варианты пройдут первый раунд автоматически, остальные образуют пары по порядку. Для 11 вариантов: 5 автопроходов и 3 пары.</p><form><label for="category-name">Название голосования</label><input id="category-name" name="name" maxlength="60" required placeholder="Например, тема следующего джема"><label for="entries">Участники</label><textarea id="entries" name="entries" required placeholder="Первый участник&#10;Второй участник&#10;Третий участник&#10;Четвёртый участник"></textarea><div class="form-error" role="alert"></div><div class="form-actions"><button class="button dark" type="submit">Создать сетку</button></div></form>`);
   formHandler(async data=>{const entries=data.get('entries').split('\n').map(x=>x.trim()).filter(Boolean);if(entries.length<4||entries.length>16)throw new Error('Нужно от 4 до 16 вариантов.');selected=await rpc('create_category',{p_name:data.get('name').trim(),p_entries:entries});dialog.close();await refresh();toast('Сетка создана. Открой голосование, когда всё готово.');});
 }
+let progressRequest=0;
+const progressStatus=(v,report)=>report.category.status==='draft'?'Голосование ещё не открыто':report.total===0?'Нет пар для голосования':v.voted===0?'Не голосовал':v.voted===report.total?`Готово · ${v.voted} из ${report.total} пар`:`${v.voted} из ${report.total} пар`;
+async function progressDialog(categoryId=category()?.id){
+  if(!categoryId||!state?.organizer)return;
+  const requestId=++progressRequest,generation=authGeneration;
+  modal('<h2>Кто проголосовал</h2><p>Загружаем участие в текущем раунде…</p>');
+  try{
+    const report=await rpc('voting_progress',{p_category:categoryId});
+    if(!dialog.open||requestId!==progressRequest||generation!==authGeneration)return;
+    const c=report.category;
+    modal(`<h2>Кто проголосовал</h2><p><strong>${escape(c.name)}</strong><br>${roundName(c.round,c.rounds)} · ${statusName(c)}</p><p>Все приглашённые по персональным кодам. Учтены голоса текущего раунда, включая актуальное переголосование. Автоматические проходы не считаются. Выбранные варианты здесь не показываются.</p><div class="voter-list">${report.voters.map(v=>`<div class="voter-row"><span>${escape(v.label)}${v.active?'':' · код отключён'}</span><span>${progressStatus(v,report)}</span></div>`).join('')||'<p>Пока никто не приглашён.</p>'}</div><div class="form-actions"><button class="button" id="progress-refresh">Обновить список</button></div><p>Список обновляется по кнопке.</p>`);
+  }catch(error){
+    if(!dialog.open||requestId!==progressRequest||generation!==authGeneration)return;
+    modal(`<h2>Кто проголосовал</h2><p class="form-error" role="alert">${escape(error.message)}</p><button class="button" id="progress-refresh">Повторить</button>`);
+  }
+  $('#progress-refresh').onclick=()=>progressDialog(categoryId);
+}
 async function votersDialog(){
   modal('<h2>Пригласить друзей</h2><p>Загружаем список…</p>');
   try{
@@ -170,7 +187,7 @@ $('#bracket').onclick=async event=>{
   catch(e){toast(e.message);}finally{busy=false;await refresh();render();}
 };
 $('#admin-tools').onclick=event=>{const action=event.target.closest('[data-action]')?.dataset.action;if(!action)return;
-  if(action==='new-category')newCategory();else if(action==='voters')votersDialog();else if(action==='trash')trashDialog();else if(action==='delete')deleteDialog();else if(action==='rename')renameDialog();else if(action==='entries')entriesDialog();else if(action==='password')passwordDialog();else if(action==='logout')logoutAdmin();else confirmAction(action);
+  if(action==='new-category')newCategory();else if(action==='voters')votersDialog();else if(action==='progress')progressDialog();else if(action==='trash')trashDialog();else if(action==='delete')deleteDialog();else if(action==='rename')renameDialog();else if(action==='entries')entriesDialog();else if(action==='password')passwordDialog();else if(action==='logout')logoutAdmin();else confirmAction(action);
 };
 dialog.addEventListener('click',async event=>{
   const toggle=event.target.closest('[data-toggle-voter]');
@@ -180,7 +197,7 @@ dialog.addEventListener('click',async event=>{
   const edit=event.target.closest('[data-edit-entry]');if(edit)editEntry(edit.dataset.editEntry,Number(edit.dataset.side));
 });
 $('#join').onclick=joinDialog;$('#admin-open').onclick=adminDialog;$('#refresh').onclick=()=>refresh();$('#dialog-close').onclick=()=>dialog.close();
-dialog.addEventListener('close',()=>{if(!dialog.open)$('#dialog-content').innerHTML='';});
+dialog.addEventListener('close',()=>{progressRequest++;if(!dialog.open)$('#dialog-content').innerHTML='';});
 $('#rules').onclick=()=>modal(`<h2>Как выбираем победителя</h2><ol class="rules-list"><li>У каждой категории своя сетка. В паре два участника — выбирай одного.</li><li>Персональный код даёт один голос в каждой паре текущего раунда. Изменить отправленный голос нельзя.</li><li>Организатор закрывает раунд. Победитель каждой пары проходит дальше.</li><li>При ничьей организатор может открыть переголосование. В таких парах можно голосовать снова.</li><li>Код предназначен одному человеку. Передав его, ты передаёшь право своего голоса.</li></ol><p>Результаты видны всем по ссылке. Имена голосующих и персональные коды публично не отображаются. Код хранится в этой вкладке до выхода; другая вкладка может попросить ввести его снова.</p>`);
 await refresh();
 if(setupKey)await adminDialog();
